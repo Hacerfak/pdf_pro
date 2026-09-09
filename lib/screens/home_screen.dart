@@ -1,14 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-
-import '/l10n/app_localizations.dart';
-
+import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
+import '/l10n/app_localizations.dart';
 import '../services/pdf_service.dart';
 import 'pdf_viewer_screen.dart';
 
@@ -101,6 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickLocalPdf() async {
+    await FilePicker.clearTemporaryFiles();
+
     List<PlatformFile> result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
@@ -109,6 +109,14 @@ class _HomeScreenState extends State<HomeScreen> {
     if (result.single.path != null) {
       _openPdf(result.single.path!);
     }
+  }
+
+  void _removeRecentItem(String pdfPath, int index) async {
+    setState(() {
+      _recentPdfs.removeAt(index);
+    });
+
+    await PdfService.removeRecentPdf(pdfPath);
   }
 
   @override
@@ -128,7 +136,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Exibe o Card do Anúncio APENAS quando o AdMob retornar um anúncio com sucesso
           if (_isAdLoaded && _mediumRectangleAd != null) ...[
             const SizedBox(height: 8),
             Center(
@@ -141,9 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
-
           const SizedBox(height: 16),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20.0),
             child: Text(
@@ -153,9 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 8),
-
           Expanded(
             child: _recentPdfs.isEmpty
                 ? Center(
@@ -171,57 +174,75 @@ class _HomeScreenState extends State<HomeScreen> {
                       final pdfPath = _recentPdfs[index];
                       final fileName = pdfPath.split('/').last;
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
+                      return Dismissible(
+                        key: Key(pdfPath),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.errorContainer,
+                            borderRadius: BorderRadius.circular(16),
                           ),
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              width: 44,
-                              height: 56,
-                              color: theme.colorScheme.surfaceContainerHigh,
-                              child: FutureBuilder<Uint8List?>(
-                                future: PdfService.generateThumbnail(pdfPath),
-                                builder: (context, snapshot) {
-                                  if (snapshot.connectionState ==
-                                          ConnectionState.done &&
-                                      snapshot.data != null) {
-                                    return Image.memory(
-                                      snapshot.data!,
-                                      fit: BoxFit.cover,
+                          child: Icon(
+                            Icons.delete_outline,
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                        onDismissed: (_) => _removeRecentItem(pdfPath, index),
+                        child: Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 4,
+                            ),
+                            leading: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                width: 44,
+                                height: 56,
+                                color: theme.colorScheme.surfaceContainerHigh,
+                                child: FutureBuilder<Uint8List?>(
+                                  future: PdfService.generateThumbnail(pdfPath),
+                                  builder: (context, snapshot) {
+                                    if (snapshot.connectionState ==
+                                            ConnectionState.done &&
+                                        snapshot.data != null) {
+                                      return Image.memory(
+                                        snapshot.data!,
+                                        fit: BoxFit.cover,
+                                      );
+                                    }
+                                    return Icon(
+                                      Icons.picture_as_pdf,
+                                      color: theme.colorScheme.primary,
                                     );
-                                  }
-                                  return Icon(
-                                    Icons.picture_as_pdf,
-                                    color: theme.colorScheme.primary,
-                                  );
-                                },
+                                  },
+                                ),
                               ),
                             ),
-                          ),
-                          title: Text(
-                            fileName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
+                            title: Text(
+                              fileName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
                             ),
-                          ),
-                          subtitle: Text(
-                            pdfPath,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.outline,
+                            subtitle: Text(
+                              pdfPath,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.outline,
+                              ),
                             ),
+                            onTap: () => _openPdf(pdfPath),
                           ),
-                          onTap: () => _openPdf(pdfPath),
                         ),
                       );
                     },

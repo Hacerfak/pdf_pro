@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdfrx/pdfrx.dart' as pdfrx;
 import 'package:printing/printing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
@@ -14,6 +15,8 @@ class PdfService {
   static final Map<String, Uint8List> _thumbnailCache = {};
 
   static Future<void> saveRecentPdf(String path) async {
+    if (path.isEmpty || !await File(path).exists()) return;
+
     final prefs = await SharedPreferences.getInstance();
     List<String> list = prefs.getStringList(_recentKey) ?? [];
     list.remove(path);
@@ -28,12 +31,26 @@ class PdfService {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList(_recentKey) ?? [];
     final List<String> validList = [];
+
     for (final path in list) {
       if (await File(path).exists()) {
         validList.add(path);
       }
     }
+
+    if (validList.length != list.length) {
+      await prefs.setStringList(_recentKey, validList);
+    }
+
     return validList;
+  }
+
+  static Future<void> removeRecentPdf(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> list = prefs.getStringList(_recentKey) ?? [];
+    list.remove(path);
+    await prefs.setStringList(_recentKey, list);
+    _thumbnailCache.remove(path);
   }
 
   static Future<Uint8List?> generateThumbnail(String pdfPath) async {
@@ -41,41 +58,51 @@ class PdfService {
       return _thumbnailCache[pdfPath];
     }
 
+    if (!await File(pdfPath).exists()) {
+      _thumbnailCache.remove(pdfPath);
+      return null;
+    }
+
     if (_thumbnailCache.length >= 20) {
       _thumbnailCache.remove(_thumbnailCache.keys.first);
     }
 
     try {
-      final file = File(pdfPath);
-      if (!await file.exists()) return null;
-      final bytes = await file.readAsBytes();
+      final doc = await pdfrx.PdfDocument.openFile(pdfPath);
+      final page = doc.pages[0];
 
-      await for (final page in Printing.raster(bytes, pages: [0], dpi: 60)) {
-        final pngBytes = await page.toPng();
-        final codec = await ui.instantiateImageCodec(pngBytes);
-        final frame = await codec.getNextFrame();
-        final ui.Image rawImage = frame.image;
+      final pageImage = await page.render(
+        fullWidth: page.width,
+        fullHeight: page.height,
+        width: (page.width / 4).round(),
+        height: (page.height / 4).round(),
+      );
+
+      if (pageImage != null) {
+        final uiImage = await pageImage.createImage();
 
         final recorder = ui.PictureRecorder();
         final canvas = Canvas(recorder);
-
         final bgPaint = Paint()..color = Colors.white;
+
         canvas.drawRect(
           Rect.fromLTWH(
             0,
             0,
-            rawImage.width.toDouble(),
-            rawImage.height.toDouble(),
+            uiImage.width.toDouble(),
+            uiImage.height.toDouble(),
           ),
           bgPaint,
         );
-        canvas.drawImage(rawImage, Offset.zero, Paint());
+        canvas.drawImage(uiImage, Offset.zero, Paint());
 
         final picture = recorder.endRecording();
-        final finalImg = await picture.toImage(rawImage.width, rawImage.height);
+        final finalImg = await picture.toImage(uiImage.width, uiImage.height);
         final byteData = await finalImg.toByteData(
           format: ui.ImageByteFormat.png,
         );
+
+        await doc.dispose();
 
         if (byteData != null) {
           final resultBytes = byteData.buffer.asUint8List();
@@ -83,10 +110,29 @@ class PdfService {
           return resultBytes;
         }
       }
+      await doc.dispose();
     } catch (e) {
-      debugPrint('Erro ao gerar miniatura: $e');
+      debugPrint('Erro ao gerar miniatura com pdfrx: $e');
     }
     return null;
+  }
+
+  static Future<String> resolvePdfPath(String rawPath) async {
+    if (rawPath.isEmpty) return rawPath;
+
+    final file = File(rawPath);
+    if (await file.exists()) return rawPath;
+
+    try {
+      final uri = Uri.parse(rawPath);
+      if (uri.scheme == 'file') {
+        final filePath = uri.toFilePath();
+        if (await File(filePath).exists()) return filePath;
+      }
+    } catch (e) {
+      debugPrint('Erro ao resolver caminho do PDF: $e');
+    }
+    return rawPath;
   }
 
   static Future<String?> preparePageImageFile(
@@ -96,6 +142,8 @@ class PdfService {
   ) async {
     try {
       final file = File(pdfPath);
+      if (!await file.exists()) return null;
+
       final bytes = await file.readAsBytes();
 
       await for (final page in Printing.raster(
@@ -186,23 +234,6 @@ class PdfService {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$errorMessage: $e')));
       }
-    }
-  }
-
-  static Future<String> resolvePdfPath(String rawPath) async {
-    if (rawPath.isEmpty) return rawPath;
-    final file = File(rawPath);
-    if (await file.exists()) return rawPath;
-    try {
-      final uri = Uri.parse(rawPath);
-      final bytes = await File.fromUri(uri).readAsBytes();
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File('${tempDir.path}/documento_recebido.pdf');
-      await tempFile.writeAsBytes(bytes);
-      return tempFile.path;
-    } catch (e) {
-      debugPrint('Erro ao resolver URI do PDF: $e');
-      return rawPath;
     }
   }
 

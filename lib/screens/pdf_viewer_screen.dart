@@ -1,14 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-
-import '/l10n/app_localizations.dart';
-
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '/l10n/app_localizations.dart';
 import '../services/ad_service.dart';
 import '../services/pdf_service.dart';
 import 'signature_position_screen.dart';
@@ -102,14 +100,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   void _exportPngWithAd(String pageLabel) async {
     final theme = Theme.of(context);
 
-    // 1. Inicia o processamento da imagem em segundo plano
     final Future<String?> imageFuture = PdfService.preparePageImageFile(
       _currentPdfPath,
       _currentPage - 1,
       pageLabel,
     );
 
-    // 2. Tenta exibir o anúncio premiado
     final bool adDisplayed = await _adService.showRewardedAd(
       onRewardEarned: () async {
         final imgPath = await imageFuture;
@@ -123,7 +119,6 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       },
     );
 
-    // 3. Se não houver anúncio disponível, exibe o Loader até finalizar a imagem
     if (!adDisplayed && mounted) {
       showDialog(
         context: context,
@@ -158,7 +153,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       final imgPath = await imageFuture;
 
       if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop(); // Fecha o diálogo
+        Navigator.of(context, rootNavigator: true).pop();
       }
 
       if (imgPath != null && mounted) {
@@ -193,122 +188,18 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           _currentPdfPath.split('/').last,
           style: const TextStyle(fontSize: 14),
         ),
-        actions: [
-          PopupMenuButton<String>(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            onSelected: (value) async {
-              switch (value) {
-                case 'save':
-                  await PdfService.savePdfToDevice(
-                    sourcePath: _currentPdfPath,
-                    context: context,
-                    dialogTitle: l10n.saveToDevice,
-                    successMessage: l10n.pdfSavedSuccess,
-                    errorMessage: l10n.saveError,
-                  );
-                  break;
-                case 'share':
-                  final params = ShareParams(files: [XFile(_currentPdfPath)]);
-                  await SharePlus.instance.share(params);
-                  break;
-                case 'print':
-                  final bytes = await File(_currentPdfPath).readAsBytes();
-                  await Printing.layoutPdf(onLayout: (_) => bytes);
-                  break;
-                case 'export_img':
-                  _exportPngWithAd(l10n.page);
-                  break;
-                case 'sign':
-                  _openSignatureScreen();
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) => [
-              PopupMenuItem(
-                value: 'save',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.download_outlined,
-                      size: 20,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(l10n.saveToDevice),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'share',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.share_outlined,
-                      size: 20,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(l10n.share),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'print',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.print_outlined,
-                      size: 20,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(l10n.print),
-                  ],
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'export_img',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.image_outlined,
-                      size: 20,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(l10n.exportPng),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'sign',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.verified_user_outlined,
-                      size: 20,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      l10n.signWithCert,
-                      style: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
       body: Column(
         children: [
+          // 1. Banner de Anúncio no topo (Abaixo da AppBar)
+          if (_isBannerLoaded && _bannerAd != null)
+            SizedBox(
+              width: _bannerAd!.size.width.toDouble(),
+              height: _bannerAd!.size.height.toDouble(),
+              child: AdWidget(ad: _bannerAd!),
+            ),
+
+          // 2. Leitor de PDF com indicador de página flutuante
           Expanded(
             child: Stack(
               children: [
@@ -362,13 +253,60 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               ],
             ),
           ),
-          if (_isBannerLoaded && _bannerAd != null)
-            SizedBox(
-              width: _bannerAd!.size.width.toDouble(),
-              height: _bannerAd!.size.height.toDouble(),
-              child: AdWidget(ad: _bannerAd!),
-            ),
         ],
+      ),
+
+      // 3. Barra de Ações no Rodapé
+      bottomNavigationBar: BottomAppBar(
+        height: 68,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            IconButton(
+              tooltip: l10n.saveToDevice,
+              icon: const Icon(Icons.download_outlined),
+              onPressed: () async {
+                await PdfService.savePdfToDevice(
+                  sourcePath: _currentPdfPath,
+                  context: context,
+                  dialogTitle: l10n.saveToDevice,
+                  successMessage: l10n.pdfSavedSuccess,
+                  errorMessage: l10n.saveError,
+                );
+              },
+            ),
+            IconButton(
+              tooltip: l10n.share,
+              icon: const Icon(Icons.share_outlined),
+              onPressed: () async {
+                final params = ShareParams(files: [XFile(_currentPdfPath)]);
+                await SharePlus.instance.share(params);
+              },
+            ),
+            IconButton(
+              tooltip: l10n.print,
+              icon: const Icon(Icons.print_outlined),
+              onPressed: () async {
+                final bytes = await File(_currentPdfPath).readAsBytes();
+                await Printing.layoutPdf(onLayout: (_) => bytes);
+              },
+            ),
+            IconButton(
+              tooltip: l10n.exportPng,
+              icon: const Icon(Icons.image_outlined),
+              onPressed: () => _exportPngWithAd(l10n.page),
+            ),
+            IconButton(
+              tooltip: l10n.signWithCert,
+              icon: Icon(
+                Icons.verified_user_outlined,
+                color: theme.colorScheme.primary,
+              ),
+              onPressed: _openSignatureScreen,
+            ),
+          ],
+        ),
       ),
     );
   }
