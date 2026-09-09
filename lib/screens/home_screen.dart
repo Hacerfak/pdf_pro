@@ -43,6 +43,9 @@ class _HomeScreenState extends State<HomeScreen> {
         onAdLoaded: (_) => setState(() => _isAdLoaded = true),
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
+          if (mounted) {
+            setState(() => _isAdLoaded = false);
+          }
         },
       ),
     )..load();
@@ -125,24 +128,22 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 8),
-          Center(
-            child: Card(
-              child: SizedBox(
-                width: 300,
-                height: 250,
-                child: _isAdLoaded
-                    ? AdWidget(ad: _mediumRectangleAd!)
-                    : Center(
-                        child: Text(
-                          l10n.adSpace,
-                          style: TextStyle(color: theme.colorScheme.outline),
-                        ),
-                      ),
+          // Exibe o Card do Anúncio APENAS quando o AdMob retornar um anúncio com sucesso
+          if (_isAdLoaded && _mediumRectangleAd != null) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: Card(
+                child: SizedBox(
+                  width: _mediumRectangleAd!.size.width.toDouble(),
+                  height: _mediumRectangleAd!.size.height.toDouble(),
+                  child: AdWidget(ad: _mediumRectangleAd!),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 20),
+          ],
+
+          const SizedBox(height: 16),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20.0),
             child: Text(
@@ -152,7 +153,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+
           const SizedBox(height: 8),
+
           Expanded(
             child: _recentPdfs.isEmpty
                 ? Center(

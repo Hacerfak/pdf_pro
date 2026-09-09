@@ -1,15 +1,13 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-
-import '/l10n/app_localizations.dart';
-
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
+import '/l10n/app_localizations.dart';
 import '../services/ad_service.dart';
 import '../services/pdf_service.dart';
 
@@ -37,6 +35,9 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
   bool _isSigning = false;
   Uint8List? _previewBytes;
 
+  int _currentPage = 0;
+  int _totalPages = 1;
+
   double _pdfVisualWidth = 595.0;
   double _pdfVisualHeight = 842.0;
 
@@ -51,7 +52,7 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadPdfAtNativeScale();
+      _loadPdfPage(_currentPage);
     });
   }
 
@@ -62,20 +63,25 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
     super.dispose();
   }
 
-  Future<void> _loadPdfAtNativeScale() async {
-    await Future.delayed(const Duration(milliseconds: 150));
+  Future<void> _loadPdfPage(int pageIndex) async {
+    setState(() => _isRendering = true);
 
     try {
       final file = File(widget.pdfPath);
       final bytes = await file.readAsBytes();
 
       final doc = PdfDocument(inputBytes: bytes);
-      final visualSize = PdfService.getVisualPdfSize(doc.pages[0]);
+      _totalPages = doc.pages.count;
+      final visualSize = PdfService.getVisualPdfSize(doc.pages[pageIndex]);
       _pdfVisualWidth = visualSize.width;
       _pdfVisualHeight = visualSize.height;
       doc.dispose();
 
-      await for (final page in Printing.raster(bytes, pages: [0], dpi: 72)) {
+      await for (final page in Printing.raster(
+        bytes,
+        pages: [pageIndex],
+        dpi: 72,
+      )) {
         final png = await page.toPng();
         if (mounted) {
           setState(() {
@@ -88,6 +94,16 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
     } catch (e) {
       debugPrint('Erro ao carregar documento: $e');
       if (mounted) setState(() => _isRendering = false);
+    }
+  }
+
+  void _changePage(int delta) {
+    final newPage = _currentPage + delta;
+    if (newPage >= 0 && newPage < _totalPages) {
+      setState(() {
+        _currentPage = newPage;
+      });
+      _loadPdfPage(_currentPage);
     }
   }
 
@@ -105,16 +121,22 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
     }
   }
 
-  void _onSignPressed(AppLocalizations l10n) {
+  void _onSignPressed(AppLocalizations l10n) async {
     if (_p12Path == null || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(l10n.selectCertAndPass)));
       return;
     }
 
-    widget.adService.showRewardedAd(
+    // Tenta exibir o anúncio premiado
+    final bool adDisplayed = await widget.adService.showRewardedAd(
       onRewardEarned: () => _executeSigning(l10n),
     );
+
+    // Se o anúncio não estiver carregado/disponível, assina diretamente sem travar a experiência
+    if (!adDisplayed && mounted) {
+      _executeSigning(l10n);
+    }
   }
 
   Future<void> _executeSigning(AppLocalizations l10n) async {
@@ -142,6 +164,7 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
         password: _passwordController.text,
         outputPath: outputPath,
         visualBounds: visualBounds,
+        pageIndex: _currentPage,
         labelDigitallySigned: l10n.digitallySigned,
         labelDate: l10n.date,
         labelUnknownHolder: l10n.unknownHolder,
@@ -168,7 +191,33 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
     final l10n = AppLocalizations.of(context)!;
 
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.positionSignature)),
+      appBar: AppBar(
+        title: Text(l10n.positionSignature),
+        actions: [
+          if (_totalPages > 1)
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _currentPage > 0 ? () => _changePage(-1) : null,
+                ),
+                Text(
+                  '${_currentPage + 1} / $_totalPages',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: _currentPage < _totalPages - 1
+                      ? () => _changePage(1)
+                      : null,
+                ),
+              ],
+            ),
+        ],
+      ),
       body: _isRendering
           ? Center(
               child: Column(
@@ -238,7 +287,7 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
                             color: Colors.white,
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.15),
+                                color: Colors.black.withValues(alpha: 0.15),
                                 blurRadius: 10,
                                 offset: const Offset(0, 4),
                               ),
@@ -281,7 +330,7 @@ class _SignaturePositionScreenState extends State<SignaturePositionScreen> {
                                     height: boxHeight,
                                     decoration: BoxDecoration(
                                       color: theme.colorScheme.primary
-                                          .withOpacity(0.15),
+                                          .withValues(alpha: 0.15),
                                       border: Border.all(
                                         color: theme.colorScheme.primary,
                                         width: 1.5,

@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '/l10n/app_localizations.dart';
 
-import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:pdfrx/pdfrx.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -29,10 +29,14 @@ class PdfViewerScreen extends StatefulWidget {
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final AdService _adService = AdService();
+  final PdfViewerController _pdfController = PdfViewerController();
+
   BannerAd? _bannerAd;
   bool _isBannerLoaded = false;
   late String _currentPdfPath;
-  int _currentPage = 0;
+
+  int _currentPage = 1;
+  int _totalPages = 1;
 
   @override
   void initState() {
@@ -95,16 +99,76 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     }
   }
 
-  void _exportPngWithAd(String pageLabel) {
-    _adService.showRewardedAd(
+  void _exportPngWithAd(String pageLabel) async {
+    final theme = Theme.of(context);
+
+    // 1. Inicia o processamento da imagem em segundo plano
+    final Future<String?> imageFuture = PdfService.preparePageImageFile(
+      _currentPdfPath,
+      _currentPage - 1,
+      pageLabel,
+    );
+
+    // 2. Tenta exibir o anúncio premiado
+    final bool adDisplayed = await _adService.showRewardedAd(
       onRewardEarned: () async {
-        await PdfService.exportPageAsImage(
-          _currentPdfPath,
-          _currentPage,
-          pageLabel,
-        );
+        final imgPath = await imageFuture;
+        if (imgPath != null && mounted) {
+          final params = ShareParams(
+            text: '$pageLabel $_currentPage',
+            files: [XFile(imgPath)],
+          );
+          await SharePlus.instance.share(params);
+        }
       },
     );
+
+    // 3. Se não houver anúncio disponível, exibe o Loader até finalizar a imagem
+    if (!adDisplayed && mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: theme.colorScheme.primary),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Text(
+                    'Exportando página...',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final imgPath = await imageFuture;
+
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop(); // Fecha o diálogo
+      }
+
+      if (imgPath != null && mounted) {
+        final params = ShareParams(
+          text: '$pageLabel $_currentPage',
+          files: [XFile(imgPath)],
+        );
+        await SharePlus.instance.share(params);
+      }
+    }
   }
 
   @override
@@ -146,7 +210,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   );
                   break;
                 case 'share':
-                  Share.shareXFiles([XFile(_currentPdfPath)]);
+                  final params = ShareParams(files: [XFile(_currentPdfPath)]);
+                  await SharePlus.instance.share(params);
                   break;
                 case 'print':
                   final bytes = await File(_currentPdfPath).readAsBytes();
@@ -245,16 +310,56 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       body: Column(
         children: [
           Expanded(
-            child: PDFView(
-              filePath: _currentPdfPath,
-              enableSwipe: true,
-              swipeHorizontal: false,
-              autoSpacing: true,
-              pageFling: true,
-              fitPolicy: FitPolicy.WIDTH,
-              onPageChanged: (page, total) {
-                _currentPage = page ?? 0;
-              },
+            child: Stack(
+              children: [
+                PdfViewer.file(
+                  _currentPdfPath,
+                  controller: _pdfController,
+                  params: PdfViewerParams(
+                    onViewerReady: (document, controller) {
+                      setState(() {
+                        _totalPages = document.pages.length;
+                      });
+                    },
+                    onPageChanged: (pageNumber) {
+                      if (pageNumber != null) {
+                        setState(() {
+                          _currentPage = pageNumber;
+                        });
+                      }
+                    },
+                  ),
+                ),
+                Positioned(
+                  bottom: 16,
+                  right: 16,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.1),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      '$_currentPage / $_totalPages',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (_isBannerLoaded && _bannerAd != null)

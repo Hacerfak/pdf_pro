@@ -6,7 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
@@ -42,17 +41,115 @@ class PdfService {
       return _thumbnailCache[pdfPath];
     }
 
+    if (_thumbnailCache.length >= 20) {
+      _thumbnailCache.remove(_thumbnailCache.keys.first);
+    }
+
     try {
       final file = File(pdfPath);
       if (!await file.exists()) return null;
       final bytes = await file.readAsBytes();
+
       await for (final page in Printing.raster(bytes, pages: [0], dpi: 60)) {
-        final png = await page.toPng();
-        _thumbnailCache[pdfPath] = png;
-        return png;
+        final pngBytes = await page.toPng();
+        final codec = await ui.instantiateImageCodec(pngBytes);
+        final frame = await codec.getNextFrame();
+        final ui.Image rawImage = frame.image;
+
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+
+        final bgPaint = Paint()..color = Colors.white;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            0,
+            rawImage.width.toDouble(),
+            rawImage.height.toDouble(),
+          ),
+          bgPaint,
+        );
+        canvas.drawImage(rawImage, Offset.zero, Paint());
+
+        final picture = recorder.endRecording();
+        final finalImg = await picture.toImage(rawImage.width, rawImage.height);
+        final byteData = await finalImg.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
+
+        if (byteData != null) {
+          final resultBytes = byteData.buffer.asUint8List();
+          _thumbnailCache[pdfPath] = resultBytes;
+          return resultBytes;
+        }
       }
     } catch (e) {
       debugPrint('Erro ao gerar miniatura: $e');
+    }
+    return null;
+  }
+
+  static Future<String?> preparePageImageFile(
+    String pdfPath,
+    int pageIndex,
+    String pageLabel,
+  ) async {
+    try {
+      final file = File(pdfPath);
+      final bytes = await file.readAsBytes();
+
+      await for (final page in Printing.raster(
+        bytes,
+        pages: [pageIndex],
+        dpi: 300,
+      )) {
+        final pngBytes = await page.toPng();
+        final codec = await ui.instantiateImageCodec(pngBytes);
+        final frame = await codec.getNextFrame();
+        final ui.Image pdfImage = frame.image;
+
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(
+          recorder,
+          Rect.fromLTWH(
+            0,
+            0,
+            pdfImage.width.toDouble(),
+            pdfImage.height.toDouble(),
+          ),
+        );
+
+        final paintBg = Paint()..color = Colors.white;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            0,
+            pdfImage.width.toDouble(),
+            pdfImage.height.toDouble(),
+          ),
+          paintBg,
+        );
+        canvas.drawImage(pdfImage, Offset.zero, Paint());
+
+        final picture = recorder.endRecording();
+        final imgWithWhiteBg = await picture.toImage(
+          pdfImage.width,
+          pdfImage.height,
+        );
+        final byteData = await imgWithWhiteBg.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
+
+        if (byteData != null) {
+          final tempDir = await getTemporaryDirectory();
+          final imgFile = File('${tempDir.path}/pagina_${pageIndex + 1}.png');
+          await imgFile.writeAsBytes(byteData.buffer.asUint8List());
+          return imgFile.path;
+        }
+        break;
+      }
+    } catch (e) {
+      debugPrint('Erro ao exportar imagem: $e');
     }
     return null;
   }
@@ -109,67 +206,6 @@ class PdfService {
     }
   }
 
-  static Future<void> exportPageAsImage(
-    String pdfPath,
-    int pageIndex,
-    String pageLabel,
-  ) async {
-    try {
-      final file = File(pdfPath);
-      final bytes = await file.readAsBytes();
-      await for (final page in Printing.raster(
-        bytes,
-        pages: [pageIndex],
-        dpi: 300,
-      )) {
-        final pngBytes = await page.toPng();
-        final codec = await ui.instantiateImageCodec(pngBytes);
-        final frame = await codec.getNextFrame();
-        final ui.Image pdfImage = frame.image;
-        final recorder = ui.PictureRecorder();
-        final canvas = Canvas(
-          recorder,
-          Rect.fromLTWH(
-            0,
-            0,
-            pdfImage.width.toDouble(),
-            pdfImage.height.toDouble(),
-          ),
-        );
-        final paintBg = Paint()..color = Colors.white;
-        canvas.drawRect(
-          Rect.fromLTWH(
-            0,
-            0,
-            pdfImage.width.toDouble(),
-            pdfImage.height.toDouble(),
-          ),
-          paintBg,
-        );
-        canvas.drawImage(pdfImage, Offset.zero, Paint());
-        final picture = recorder.endRecording();
-        final imgWithWhiteBg = await picture.toImage(
-          pdfImage.width,
-          pdfImage.height,
-        );
-        final byteData = await imgWithWhiteBg.toByteData(
-          format: ui.ImageByteFormat.png,
-        );
-        if (byteData != null) {
-          final tempDir = await getTemporaryDirectory();
-          final imgFile = File('${tempDir.path}/pagina_${pageIndex + 1}.png');
-          await imgFile.writeAsBytes(byteData.buffer.asUint8List());
-          await Share.shareXFiles([
-            XFile(imgFile.path),
-          ], text: '$pageLabel ${pageIndex + 1}');
-        }
-        break;
-      }
-    } catch (e) {
-      debugPrint('Erro ao exportar imagem: $e');
-    }
-  }
-
   static String _removeAccents(String text) {
     const withAccents =
         'ÀÁÂÃÄÅàáâãäåÒÓÔÕÖØòóôõöøÈÉÊËèéêëÇçÌÍÎÏìíîïÙÚÛÜùúûüÝýÿÑñ';
@@ -222,14 +258,16 @@ class PdfService {
     required String password,
     required String outputPath,
     required Rect visualBounds,
+    required int pageIndex,
     required String labelDigitallySigned,
     required String labelDate,
     required String labelUnknownHolder,
   }) async {
-    final PdfDocument document = PdfDocument(
-      inputBytes: File(pdfPath).readAsBytesSync(),
-    );
-    final PdfPage page = document.pages[0];
+    final pdfBytes = await File(pdfPath).readAsBytes();
+    final certBytes = await File(p12Path).readAsBytes();
+
+    final PdfDocument document = PdfDocument(inputBytes: pdfBytes);
+    final PdfPage page = document.pages[pageIndex];
 
     final clientSize = page.getClientSize();
     final double pageW = clientSize.width;
@@ -271,7 +309,6 @@ class PdfService {
     final String fieldName =
         'signature_${DateTime.now().millisecondsSinceEpoch}';
 
-    final certBytes = File(p12Path).readAsBytesSync();
     final certificate = PdfCertificate(certBytes, password);
 
     final holderName = extractHolderName(
